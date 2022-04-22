@@ -1,0 +1,196 @@
+-- Create tables from csvs
+create table covid_vaccinations (
+iso_code varchar(30),
+continent varchar(50),
+location varchar(50),
+date date,
+total_tests integer,
+new_tests integer,
+total_tests_per_thousand float8,
+new_tests_per_thousand float8,
+new_tests_smoothed integer,
+new_tests_smoothed_per_thousand float8,
+positive_rate float8,
+tests_per_case float8,
+tests_units varchar(50),
+total_vaccinations bigint,
+people_vaccinated bigint,
+people_fully_vaccinated bigint,
+total_boosters bigint,
+new_vaccinations integer,
+new_vaccinations_smoothed integer,
+total_vaccinations_per_hundred float8,
+people_vaccinated_per_hundred float8,
+people_fully_vaccinated_per_hundred float8,
+total_boosters_per_hundred float8,
+new_vaccinations_smoothed_per_million float8,
+new_people_vaccinated_smoothed integer,
+new_people_vaccinated_smoothed_per_hundred float8,
+stringency_index float8,
+population_density float8,
+median_age float8,
+aged_65_older float8,
+aged_70_older float8,
+gdp_per_capita float8,
+extreme_poverty float8,
+cardiovasc_death_rate float8,
+diabetes_prevalence float8,
+female_smokers float8, 
+male_smokers float8,
+handwashing_facilities float8,
+hospital_beds_per_thousand float8,
+life_expectancy float8,
+human_development_index float8,
+excess_mortality_cumulative_absolute float8,
+excess_mortality_cumulative float8,
+excess_mortality float8,
+excess_mortality_cumulative_per_million float8
+);
+
+create table covid_deaths (
+iso_code varchar(30),
+continent varchar(50),
+location varchar(50),
+date date,
+population bigint,
+total_cases float8,
+new_cases float8,
+new_cases_smoothed float8,
+total_deaths float8,
+new_deaths float8,
+new_deaths_smoothed float8,
+total_cases_per_million float8,
+new_cases_per_million float8,
+new_cases_smoothed_per_million float8,
+total_deaths_per_million float8,
+new_deaths_per_million float8,
+new_deaths_smoothed_per_million float8,
+reproduction_rate float8,
+icu_patients integer,
+icu_patients_per_million float8,
+hosp_patients integer,
+hosp_patients_per_million float8,
+weekly_icu_admissions integer,
+weekly_icu_admissions_per_million float8,
+weekly_hosp_admissions integer,
+weekly_hosp_admissions_per_million float8
+);
+
+-- important: 'OWID_%' already groups by continents, income, and others
+select * from covid_deaths
+where iso_code like 'OWID_%'
+order by 1;
+
+--DATA EXPLORATION--
+
+-- Select Data we will be working with
+select location, date, total_cases, new_cases, total_deaths, population
+from covid_deaths
+order by 1,2;
+
+-- Total cases vs Total Deaths
+select location, date, total_cases, total_deaths, (total_deaths/total_cases)*100 as death_case_percentaje
+from covid_deaths
+order by 1,2;
+
+-- Total cases vs Total Deaths
+---- how many of the infected died
+select location, date, total_cases, total_deaths, (total_deaths/total_cases)*100 as death_vs_cases_percentaje
+from covid_deaths
+-- where location like 'Argentina'
+order by 1,2;
+
+-- Total cases vs Population
+---- what % of population got infected
+select location, date, population, total_cases, (total_cases/population)*100 as cases_vs_population_percentaje
+from covid_deaths
+-- where location like 'Argentina'
+order by 1,2;
+
+-- Countries with highest infection rate vs Population
+select location, population, max(total_cases) as highest_infection_count, max((total_cases/population)*100) as percent_population_infected 
+from covid_deaths
+group by location, population
+order by percent_population_infected desc;
+
+-- Countries with highest death count vs population
+select location, population, max(total_deaths) as highest_death_count, max((total_deaths/population)*100) as percent_population_died 
+from covid_deaths
+where iso_code not like 'owid_%'
+group by location, population
+order by percent_population_died desc;
+
+-- Breaking things down by continent
+select continent, max(total_Deaths) as total_death_count
+from covid_deaths
+where iso_code not like 'owid_%' and continent is not null
+group by continent
+order by  total_death_count;
+
+-- Global numbers per day
+select sum(new_cases) as cases_per_day, sum(new_deaths) as deaths_per_day, (sum(new_deaths)/sum(new_cases))*100 as death_percentage
+from covid_deaths
+where iso_code not like 'owid_%' and continent is not null
+group by date
+order by 1, 2;
+
+--------
+
+-- Joining both tables
+---- Looking at total population vs vaccinations
+---- Using a common table expresion (CTE) to allow calculations with calculated columns
+with population_vs_vaccination (continent, location, date, population, new_vaccinations, rolling_people_vaccinated)
+as (
+	select cd.continent, cd.location, cd.date, cd.population, cv.new_vaccinations,
+		sum(cv.new_vaccinations) over (partition by cd.location order by cd.location,cd.date) 
+			as rolling_people_vaccinated
+	from covid_deaths cd
+	join covid_vaccinations cv
+		on cd.location = cv.location
+		and cd.date = cv.date
+	where cd.iso_code not like 'owid_%' and cd.continent is not null
+	order by 2,3 
+	)
+select *, (rolling_people_vaccinated/population)*100
+from population_vs_vaccination;
+
+-- same thing, but using a temp table
+drop table if exists percent_population_vaccinated; -- just in case!
+
+create temp table percent_population_vaccinated(
+	continent varchar(50),
+	location varchar(50),
+	date date,
+	population bigint,
+	new_vaccinations bigint,
+	rolling_people_vaccinated bigint
+);
+
+insert into percent_population_vaccinated
+	select cd.continent, cd.location, cd.date, cd.population, cv.new_vaccinations,
+		sum(cv.new_vaccinations) over (partition by cd.location order by cd.location,cd.date) 
+			as rolling_people_vaccinated
+	from covid_deaths cd
+	join covid_vaccinations cv
+		on cd.location = cv.location
+		and cd.date = cv.date
+	where cd.iso_code not like 'owid_%' and cd.continent is not null
+	order by 2,3;
+
+select *, (rolling_people_vaccinated/population)*100
+from percent_population_vaccinated;
+
+-- Create view for later visualizations
+create view percent_population_vaccinated as
+	select cd.continent, cd.location, cd.date, cd.population, cv.new_vaccinations,
+		sum(cv.new_vaccinations) over (partition by cd.location order by cd.location,cd.date) 
+			as rolling_people_vaccinated
+	from covid_deaths cd
+	join covid_vaccinations cv
+		on cd.location = cv.location
+		and cd.date = cv.date
+	where cd.iso_code not like 'owid_%' and cd.continent is not null
+	order by 2,3;
+
+
+
