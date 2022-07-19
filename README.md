@@ -1,4 +1,4 @@
-# covid_project
+# covid
 
 Analysis of public dataset of Covid data.
 
